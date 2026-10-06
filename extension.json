@@ -1,0 +1,33 @@
+{
+    "$schema": "../../packages/sdk/manifest.schema.json",
+    "id": "sso",
+    "name": "Single Sign-On",
+    "version": "1.0.0",
+    "description": "Sign in to the panel with an external account such as Discord.",
+    "provider": "Sso\\SsoServiceProvider",
+    "autoload": {
+        "Sso\\Providers\\": "providers",
+        "Sso\\": "src"
+    },
+    "requires": {
+        "panel": "^2.0.0-dev",
+        "sdk": "^2.0.0-beta.4",
+        "php": "^8.3"
+    },
+    "ui": {
+        "entry": "dist/client.js",
+        "mode": "native",
+        "prefix": "sso",
+        "screens": [
+            {
+                "id": "connections",
+                "area": "account",
+                "path": "connections",
+                "nav": {
+                    "label": "Connections",
+                    "icon": "link"
+                }
+            }
+        ]
+    }
+}

@@ -1,0 +1,143 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Sso;
+
+use Illuminate\Support\Facades\Http;
+use Pterodactyl\Services\Extensions\ExtensionSettingDefinition;
+use Sso\Contracts\IdentityProvider;
+use Sso\Data\ExternalIdentity;
+use Sso\Exceptions\SsoException;
+
+abstract class OAuth2Provider implements IdentityProvider
+{
+    /**
+     * @var SsoSettings
+     */
+    protected SsoSettings $config;
+
+    /**
+     * @param SsoSettings
+     */
+    public function __construct(SsoSettings $config)
+    {
+        $this->config = $config;
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function settings(): array
+    {
+        return [
+            ExtensionSettingDefinition::make($this->key('enabled'), $this->key('enabled'), false, ['boolean'])
+                ->label('Enabled')
+                ->tab($this->name())
+                ->field('toggle')
+                ->normalizeUsing(fn (mixed $value): bool => $value === true),
+            ExtensionSettingDefinition::make($this->key('client_id'), $this->key('client_id'), '', ['nullable', 'string', 'max:255'])
+                ->label('Client ID')
+                ->tab($this->name())
+                ->help('Set the redirect URL of the '.$this->name().' application to '.SsoRoutes::callback($this->id())),
+            ExtensionSettingDefinition::make($this->key('client_secret'), $this->key('client_secret'), '', ['nullable', 'string', 'max:255'])
+                ->label('Client secret')
+                ->tab($this->name())
+                ->secret(),
+        ];
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function enabled(): bool
+    {
+        return $this->config->boolean($this->key('enabled'))
+            && $this->config->string($this->key('client_id')) !== ''
+            && $this->config->string($this->key('client_secret')) !== '';
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function authorizationUrl(string $state, string $redirectUri): string
+    {
+        return $this->authorizeEndpoint().'?'.http_build_query([
+            ...$this->authorizationParameters(),
+            'response_type' => 'code',
+            'client_id' => $this->config->string($this->key('client_id')),
+            'redirect_uri' => $redirectUri,
+            'scope' => implode(' ', $this->scopes()),
+            'state' => $state,
+        ], '', '&', PHP_QUERY_RFC3986);
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function identify(string $code, string $redirectUri): ExternalIdentity
+    {
+        $token = Http::asForm()->acceptJson()->timeout(10)->post($this->tokenEndpoint(), [
+            'grant_type' => 'authorization_code',
+            'code' => $code,
+            'redirect_uri' => $redirectUri,
+            'client_id' => $this->config->string($this->key('client_id')),
+            'client_secret' => $this->config->string($this->key('client_secret')),
+        ])->throw()->json('access_token');
+
+        if (! is_string($token) || $token === '') {
+            throw new SsoException(SsoException::PROVIDER);
+        }
+
+        $user = Http::acceptJson()->timeout(10)->withToken($token)->get($this->userEndpoint())->throw()->json();
+
+        if (! is_array($user)) {
+            throw new SsoException(SsoException::PROVIDER);
+        }
+
+        return $this->mapIdentity($user);
+    }
+
+    /**
+     * @return string
+     */
+    abstract protected function authorizeEndpoint(): string;
+
+    /**
+     * @return string
+     */
+    abstract protected function tokenEndpoint(): string;
+
+    /**
+     * @return string
+     */
+    abstract protected function userEndpoint(): string;
+
+    /**
+     * @return array
+     */
+    abstract protected function scopes(): array;
+
+    /**
+     * @param array
+     * @return ExternalIdentity
+     */
+    abstract protected function mapIdentity(array $user): ExternalIdentity;
+
+    /**
+     * @return array
+     */
+    protected function authorizationParameters(): array
+    {
+        return [];
+    }
+
+    /**
+     * @param string
+     * @return string
+     */
+    protected function key(string $name): string
+    {
+        return $this->id().'_'.$name;
+    }
+}

@@ -1,0 +1,12 @@
+{
+    "name": "pterodactyl-sso",
+    "version": "1.0.0",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "build": "vite build",
+        "dev": "vite build --watch",
+        "typecheck": "tsc --noEmit",
+        "test": "vitest run --config vitest.config.ts"
+    }
+}
