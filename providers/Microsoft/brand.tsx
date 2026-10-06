@@ -2,7 +2,7 @@ import type { ProviderBrand } from '../../src/client/brand';
 
 export default {
     id: 'microsoft',
-    className: 'sso:border-[#8c8c8c] sso:bg-white sso:text-[#5e5e5e] sso:hover:bg-[#f3f3f3]',
+    className: 'sso:border-[#f3f4f6] sso:bg-[#f3f4f6] sso:text-[#5e5e5e] sso:hover:border-[#e5e7eb] sso:hover:bg-[#e5e7eb]',
     icon: (
         <svg viewBox={'0 0 23 23'} aria-hidden={'true'} className={'sso:size-5'}>
             <rect x={'1'} y={'1'} width={'10'} height={'10'} fill={'#f25022'} />
