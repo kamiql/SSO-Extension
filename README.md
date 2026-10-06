@@ -53,6 +53,31 @@ final class GitHubProvider extends OAuth2Provider
 
 The directory name, the namespace segment and the class prefix must match (`providers/GitHub` → `Sso\Providers\GitHub\GitHubProvider`). The enable, client ID and client secret settings, the routes, the login button and the Connections row all come from that class.
 
+If the user endpoint does not return everything `mapIdentity()` needs, override `enrich()`. It runs after the profile is fetched and before `mapIdentity()`. It receives the access token and the profile array, and returns the array that gets passed to `mapIdentity()`. By default it returns the profile unchanged.
+
+GitHub uses it to fetch a verified email, because the email on the profile is optional and not verified:
+
+```php
+protected function enrich(string $token, array $user): array
+{
+    try {
+        $emails = Http::acceptJson()->timeout(10)->withToken($token)->get('https://api.github.com/user/emails')->throw()->json();
+    } catch (Throwable) {
+        return $user;
+    }
+
+    foreach (is_array($emails) ? $emails : [] as $entry) {
+        if (is_array($entry) && ($entry['primary'] ?? false) === true && ($entry['verified'] ?? false) === true && is_string($entry['email'] ?? null)) {
+            return [...$user, 'sso_email' => $entry['email']];
+        }
+    }
+
+    return $user;
+}
+```
+
+Any exception thrown in `enrich()` fails the sign-in. If the extra data is optional, catch the exception and return `$user` as it is, like GitHub does.
+
 A provider that does not use OAuth 2 implements `Sso\Contracts\IdentityProvider` directly.
 
 Without a `brand.tsx`, the provider gets a neutral button. With one, it exports its colours and logo, keyed by the provider's `id` (see `providers/Discord/brand.tsx`). Rebuild the frontend (`npm run build`) after adding or changing a brand.
