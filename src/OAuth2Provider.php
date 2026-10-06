@@ -95,7 +95,34 @@ abstract class OAuth2Provider implements IdentityProvider
             throw new SsoException(SsoException::PROVIDER);
         }
 
-        return $this->mapIdentity($user);
+        return $this->mapIdentity($this->enrich($token, $user));
+    }
+
+    /**
+     * Add anything the profile endpoint does not return, such as a verified email
+     * that lives on a separate endpoint. Runs before mapIdentity().
+     *
+     * @param string
+     * @param array
+     * @return array
+     */
+    protected function enrich(string $token, array $user): array
+    {
+        return $user;
+    }
+
+    /**
+     * @param mixed
+     * @return string
+     */
+    protected function stringId(mixed $value): string
+    {
+        $id = is_int($value) ? (string) $value : $value;
+        if (! is_string($id) || $id === '') {
+            throw new SsoException(SsoException::PROVIDER);
+        }
+
+        return $id;
     }
 
     /**

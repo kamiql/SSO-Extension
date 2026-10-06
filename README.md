@@ -6,6 +6,10 @@ Lets users sign in to the panel with an external account. Built as a module that
 
 **Included Providers:**
 - Discord
+- GitHub
+- Google
+- GitLab
+- Microsoft
 
 ## Install
 
