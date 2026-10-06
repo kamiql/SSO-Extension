@@ -35,7 +35,7 @@ beforeEach(function (): void {
     ]);
     Event::fake([DirectLogin::class, ActivityLogged::class]);
     Extension::query()->where('identifier', 'sso')->delete();
-    Extension::query()->create(['identifier' => 'sso', 'version' => '1.0.0', 'enabled' => true]);
+    Extension::query()->create(['identifier' => 'sso', 'version' => '1.1.0', 'enabled' => true]);
     $this->app->forgetInstance(ExtensionRepository::class);
     $this->app->forgetInstance(ExtensionProviderLoader::class);
     $this->app->forgetInstance(ExtensionManager::class);
