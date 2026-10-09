@@ -29,7 +29,17 @@ final class SsoServiceProvider extends ExtensionProvider
                 ->label('Link accounts by verified email')
                 ->help('Sign in a user whose panel email matches the verified email of an external account that is not linked yet, and link it. Only enable this for providers that verify email addresses.')
                 ->field('toggle')
-                ->normalizeUsing(fn (mixed $value): bool => $value === true),
+                ->normalizeUsing(fn(mixed $value): bool => $value === true),
+            ExtensionSettingDefinition::make(
+                SsoSettings::AUTO_CREATE_USERS,
+                SsoSettings::AUTO_CREATE_USERS,
+                false,
+                ['boolean'],
+            )
+                ->label('Automatically create accounts from verified emails')
+                ->help('Create a panel account only if the provider supplies a verified email and no account with that email exists.')
+                ->field('toggle')
+                ->normalizeUsing(fn(mixed $value): bool => $value === true),
         ]));
     }
 
@@ -52,6 +62,6 @@ final class SsoServiceProvider extends ExtensionProvider
         $names = array_map('basename', File::directories($this->extensionPath('providers')));
         sort($names);
 
-        return array_map(fn (string $name): string => 'Sso\\Providers\\'.$name.'\\'.$name.'Provider', $names);
+        return array_map(fn(string $name): string => 'Sso\\Providers\\' . $name . '\\' . $name . 'Provider', $names);
     }
 }

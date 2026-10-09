@@ -18,7 +18,7 @@ final class Identity extends Model
     /**
      * @var array
      */
-    protected $fillable = ['user_id', 'provider', 'provider_user_id', 'name', 'email', 'avatar_url', 'last_login_at'];
+    protected $fillable = ['user_id', 'provider', 'provider_user_id', 'name', 'first_name', 'last_name', 'email', 'avatar_url', 'last_login_at'];
 
     /**
      * @return BelongsTo

@@ -39,18 +39,24 @@ final class IdentityResolver
         }
 
         $user = $this->userByVerifiedEmail($identity);
-        if (! $user instanceof User || Identity::query()->where('user_id', $user->id)->where('provider', $identity->provider)->exists()) {
-            throw new SsoException(SsoException::UNLINKED);
+
+        if ($user instanceof User) {
+            Identity::query()->create([
+                ...$identity->details(),
+                'user_id' => $user->id,
+                'provider' => $identity->provider,
+                'provider_user_id' => $identity->id,
+                'last_login_at' => now(),
+            ]);
+        } else {
+            if (! $this->config->boolean(SsoSettings::AUTO_CREATE_USERS)) {
+                throw new SsoException(SsoException::UNLINKED);
+            }
+
+            $user = $this->createPanelUser($identity);
         }
 
-        Identity::query()->create([
-            ...$identity->details(),
-            'user_id' => $user->id,
-            'provider' => $identity->provider,
-            'provider_user_id' => $identity->id,
-            'last_login_at' => now(),
-        ]);
-
+        
         return $user;
     }
 
@@ -95,5 +101,22 @@ final class IdentityResolver
         }
 
         return User::query()->where('email', $identity->email)->first();
+    }
+
+    private function createPanelUser(Identity $identity): ?User 
+    {
+        $email = mb_strtolower(trim($identity->email ?? ''));
+
+        $firstName = mb_strtolower(trim($identity->firstName ?? ''));
+        $lastName = mb_strtolower(trim($identity->lastName ?? ''));
+        $username = mb_strtolower(trim($identity->name ?? ''));
+
+        $this->userCreationService->handle([
+            'email' => $email,
+            'username' => $username,
+            'name_first' => $firstName,
+            'name_last' => $lastName,
+            'root_admin' => false,
+        ]);
     }
 }

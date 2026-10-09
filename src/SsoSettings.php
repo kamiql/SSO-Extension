@@ -11,6 +11,7 @@ use RuntimeException;
 final class SsoSettings
 {
     public const string LINK_BY_EMAIL = 'link_by_email';
+    public const string AUTO_CREATE_USERS = 'auto_create_users';
 
     /**
      * @var ExtensionSettingsRegistry
