@@ -77,6 +77,9 @@ final class HeliumProvider extends OAuth2Provider
         $email = $user['email'] ?? null;
         $verified = $user['email_verified'] ?? false;
 
+        $firstName = $user['given_name'] ?? null;
+        $lastName = $user['family_name'] ?? null;
+
         return new ExternalIdentity(
             $this->id(),
             $id,
@@ -84,6 +87,8 @@ final class HeliumProvider extends OAuth2Provider
             is_string($email) && $email !== '' ? $email : null,
             $verified,
             null,
+            $firstName,
+            $lastName
         );
     }
 }

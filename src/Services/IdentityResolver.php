@@ -107,9 +107,10 @@ final class IdentityResolver
     {
         $email = mb_strtolower(trim($identity->email ?? ''));
 
-        $firstName = mb_strtolower(trim($identity->firstName ?? ''));
-        $lastName = mb_strtolower(trim($identity->lastName ?? ''));
         $username = mb_strtolower(trim($identity->name ?? ''));
+
+        $firstName = mb_strtolower(trim($identity->firstName ?? $username));
+        $lastName = mb_strtolower(trim($identity->lastName ?? $username));
 
         $this->userCreationService->handle([
             'email' => $email,
