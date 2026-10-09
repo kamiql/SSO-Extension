@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Sso\Services;
 
 use Pterodactyl\Models\User;
+use Pterodactyl\Services\Users\UserCreationService;
 use Sso\Data\ExternalIdentity;
 use Sso\Exceptions\SsoException;
 use Sso\Models\Identity;
@@ -20,7 +21,7 @@ final class IdentityResolver
     /**
      * @param SsoSettings
      */
-    public function __construct(SsoSettings $config)
+    public function __construct(SsoSettings $config, private UserCreationService $userCreationService)
     {
         $this->config = $config;
     }
