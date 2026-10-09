@@ -29,6 +29,11 @@ interface IdentityProvider
     public function enabled(): bool;
 
     /**
+     * @return bool
+     */
+    public function usesPkce(): bool;
+
+    /**
      * @param string
      * @param string
      * @param string|null
@@ -43,9 +48,4 @@ interface IdentityProvider
      * @return ExternalIdentity
      */
     public function identify(string $code, string $redirectUri, ?string $codeVerifier = null,): ExternalIdentity;
-
-    /**
-     * @return bool
-     */
-    public function usesPkce(): bool;
 }

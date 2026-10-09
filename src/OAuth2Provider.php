@@ -60,6 +60,13 @@ abstract class OAuth2Provider implements IdentityProvider
     /**
      * @inheritdoc
      */
+    public function usesPkce(): bool {
+        return false;
+    }
+
+    /**
+     * @inheritdoc
+     */
     public function authorizationUrl(string $state, string $redirectUri, ?string $codeChallenge = null): string
     {
         $parameters = [
