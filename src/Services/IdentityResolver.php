@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace Sso\Services;
 
+use Pterodactyl\Contracts\Users\CreatesUsers;
 use Pterodactyl\Models\User;
-use Pterodactyl\Services\Users\UserCreationService;
 use Sso\Data\ExternalIdentity;
 use Sso\Exceptions\SsoException;
 use Sso\Models\Identity;
@@ -21,7 +21,7 @@ final class IdentityResolver
     /**
      * @param SsoSettings
      */
-    public function __construct(SsoSettings $config, private UserCreationService $userCreationService)
+    public function __construct(SsoSettings $config, CreatesUsers $users,)
     {
         $this->config = $config;
     }
@@ -113,7 +113,7 @@ final class IdentityResolver
         $firstName = mb_strtolower(trim($identity->firstName ?? $username));
         $lastName = mb_strtolower(trim($identity->lastName ?? $username));
 
-        $this->userCreationService->handle([
+        $this->users->create([
             'email' => $email,
             'username' => $username,
             'name_first' => $firstName,
