@@ -4,7 +4,7 @@ export default {
     id: 'helium',
     className: 'sso:border-[#f3f4f6] sso:bg-[#f3f4f6] sso:text-[#5e5e5e] sso:hover:border-[#e5e7eb] sso:hover:bg-[#e5e7eb]',
     icon: (
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+        <svg viewBox={'0 0 23 23'} aria-hidden={'true'} className={'sso:size-5'}>
             <rect width="512" height="512" rx="112" fill="#0B5FA5"/>
             <text x="90" y="145"
                     font-family="Arial, Helvetica, sans-serif"
