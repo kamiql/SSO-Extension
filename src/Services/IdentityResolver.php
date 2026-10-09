@@ -17,13 +17,15 @@ final class IdentityResolver
      * @var SsoSettings
      */
     protected SsoSettings $config;
+    protected CreatesUsers $users;
 
     /**
      * @param SsoSettings
      */
-    public function __construct(SsoSettings $config, CreatesUsers $users,)
+    public function __construct(SsoSettings $config, CreatesUsers $users)
     {
         $this->config = $config;
+        $this->users = $users;
     }
 
     /**
