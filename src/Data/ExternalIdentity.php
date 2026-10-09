@@ -22,6 +22,16 @@ final readonly class ExternalIdentity
     public string $name;
 
     /**
+     * @var string
+     */
+    public ?string $firstName;
+
+    /**
+     * @var string
+     */
+    public ?string $lastName;
+
+    /**
      * @var string|null
      */
     public ?string $email;
@@ -44,7 +54,7 @@ final readonly class ExternalIdentity
      * @param bool
      * @param string|null
      */
-    public function __construct(string $provider, string $id, string $name, ?string $email, bool $emailVerified, ?string $avatarUrl)
+    public function __construct(string $provider, string $id, string $name, ?string $email, bool $emailVerified, ?string $avatarUrl, ?string $firstName, ?string $lastName)
     {
         $this->provider = $provider;
         $this->id = $id;
@@ -52,6 +62,8 @@ final readonly class ExternalIdentity
         $this->email = $email;
         $this->emailVerified = $emailVerified;
         $this->avatarUrl = $avatarUrl;
+        $this->firstName = $firstName;
+        $this->lastName = $lastName;
     }
 
     /**

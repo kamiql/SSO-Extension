@@ -103,7 +103,7 @@ final class IdentityResolver
         return User::query()->where('email', $identity->email)->first();
     }
 
-    private function createPanelUser(Identity $identity): ?User 
+    private function createPanelUser(ExternalIdentity $identity): ?User 
     {
         $email = mb_strtolower(trim($identity->email ?? ''));
 
