@@ -28,6 +28,13 @@ final class GoogleProvider extends OAuth2Provider
     /**
      * @inheritdoc
      */
+    public function usesPkce(): bool {
+        return false;
+    }
+
+    /**
+     * @inheritdoc
+     */
     protected function authorizeEndpoint(): string
     {
         return 'https://accounts.google.com/o/oauth2/v2/auth';

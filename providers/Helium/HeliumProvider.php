@@ -28,6 +28,13 @@ final class HeliumProvider extends OAuth2Provider
     /**
      * @inheritdoc
      */
+    public function usesPkce(): bool {
+        return true;
+    }
+
+    /**
+     * @inheritdoc
+     */
     protected function authorizeEndpoint(): string
     {
         return 'https://id.kamiql.de/oauth2/authorize';

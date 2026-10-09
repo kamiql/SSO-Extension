@@ -55,14 +55,7 @@ abstract class OAuth2Provider implements IdentityProvider
         return $this->config->boolean($this->key('enabled'))
             && $this->config->string($this->key('client_id')) !== ''
             && $this->config->string($this->key('client_secret')) !== '';
-    }
-
-    /**
-     * @inheritdoc
-     */
-    public function usesPkce(): bool {
-        return false;
-    }
+    }    
 
     /**
      * @inheritdoc

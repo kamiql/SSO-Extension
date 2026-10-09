@@ -30,6 +30,13 @@ final class GitHubProvider extends OAuth2Provider
     /**
      * @inheritdoc
      */
+    public function usesPkce(): bool {
+        return false;
+    }
+
+    /**
+     * @inheritdoc
+     */
     protected function authorizeEndpoint(): string
     {
         return 'https://github.com/login/oauth/authorize';

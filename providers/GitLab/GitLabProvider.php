@@ -28,6 +28,13 @@ final class GitLabProvider extends OAuth2Provider
     /**
      * @inheritdoc
      */
+    public function usesPkce(): bool {
+        return false;
+    }
+
+    /**
+     * @inheritdoc
+     */
     protected function authorizeEndpoint(): string
     {
         return 'https://gitlab.com/oauth/authorize';

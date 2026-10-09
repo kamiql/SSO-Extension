@@ -28,6 +28,13 @@ final class MicrosoftProvider extends OAuth2Provider
     /**
      * @inheritdoc
      */
+    public function usesPkce(): bool {
+        return false;
+    }
+
+    /**
+     * @inheritdoc
+     */
     protected function authorizeEndpoint(): string
     {
         return 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize';
