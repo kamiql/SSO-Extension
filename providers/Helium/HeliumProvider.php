@@ -2,12 +2,12 @@
 
 declare(strict_types=1);
 
-namespace Sso\Providers\Microsoft;
+namespace Sso\Providers\Helium;
 
 use Sso\Data\ExternalIdentity;
 use Sso\OAuth2Provider;
 
-final class MicrosoftProvider extends OAuth2Provider
+final class HeliumProvider extends OAuth2Provider
 {
     /**
      * @inheritdoc
