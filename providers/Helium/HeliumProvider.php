@@ -2,20 +2,20 @@
 
 declare(strict_types=1);
 
-namespace Sso\Providers\Discord;
+namespace Sso\Providers\Helium;
 
 use Sso\Data\ExternalIdentity;
 use Sso\Exceptions\SsoException;
 use Sso\OAuth2Provider;
 
-final class DiscordProvider extends OAuth2Provider
+final class HeliumProvider extends OAuth2Provider
 {
     /**
      * @inheritdoc
      */
     public function id(): string
     {
-        return 'discord';
+        return 'helium';
     }
 
     /**
@@ -23,7 +23,7 @@ final class DiscordProvider extends OAuth2Provider
      */
     public function name(): string
     {
-        return 'Discord';
+        return 'Helium';
     }
 
     /**
@@ -31,7 +31,7 @@ final class DiscordProvider extends OAuth2Provider
      */
     protected function authorizeEndpoint(): string
     {
-        return 'https://discord.com/oauth2/authorize';
+        return 'https://id.kamiql.de/oauth2/authorize';
     }
 
     /**
@@ -39,7 +39,7 @@ final class DiscordProvider extends OAuth2Provider
      */
     protected function tokenEndpoint(): string
     {
-        return 'https://discord.com/api/oauth2/token';
+        return 'https://id.kamiql.de/oauth2/token';
     }
 
     /**
@@ -47,7 +47,7 @@ final class DiscordProvider extends OAuth2Provider
      */
     protected function userEndpoint(): string
     {
-        return 'https://discord.com/api/users/@me';
+        return 'https://id.kamiql.de/userinfo';
     }
 
     /**
@@ -55,7 +55,7 @@ final class DiscordProvider extends OAuth2Provider
      */
     protected function scopes(): array
     {
-        return ['identify', 'email'];
+        return ['openid', 'email', 'profile', 'offline_access'];
     }
 
     /**
@@ -76,18 +76,16 @@ final class DiscordProvider extends OAuth2Provider
             throw new SsoException(SsoException::PROVIDER);
         }
 
-        $username = is_string($user['username'] ?? null) ? $user['username'] : $id;
-        $globalName = $user['global_name'] ?? null;
-        $avatar = $user['avatar'] ?? null;
+        $username = is_string($user['preferred_username'] ?? null) ? $user['preferred_username'] : $id;
         $email = $user['email'] ?? null;
 
         return new ExternalIdentity(
             $this->id(),
             $id,
-            is_string($globalName) && $globalName !== '' ? $globalName : $username,
+            $username,
             is_string($email) && $email !== '' ? $email : null,
-            ($user['verified'] ?? false) === true,
-            is_string($avatar) && $avatar !== '' ? sprintf('https://cdn.discordapp.com/avatars/%s/%s.png', $id, $avatar) : null,
+            ($user['email_verified'] ?? false) === true,
+            null
         );
     }
 }
