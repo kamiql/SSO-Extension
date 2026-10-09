@@ -13,78 +13,90 @@ use Sso\SsoSettings;
 
 final class IdentityResolver
 {
-    /**
-     * @var SsoSettings
-     */
     protected SsoSettings $config;
+
     protected CreatesUsers $users;
 
-    /**
-     * @param SsoSettings
-     */
     public function __construct(SsoSettings $config, CreatesUsers $users)
     {
         $this->config = $config;
         $this->users = $users;
     }
 
-    /**
-     * @param ExternalIdentity
-     * @return User
-     */
     public function userFor(ExternalIdentity $identity): User
     {
+        // Bereits verknüpfte Identität: bestehenden Account verwenden.
         $linked = $this->find($identity);
+
         if ($linked instanceof Identity) {
-            $linked->fill([...$identity->details(), 'last_login_at' => now()])->save();
+            $linked->fill([
+                ...$identity->details(),
+                'last_login_at' => now(),
+            ])->save();
 
             return $linked->user;
         }
 
-        $user = $this->userByVerifiedEmail($identity);
+        $email = mb_strtolower(trim($identity->email ?? ''));
+
+        if (
+            ! $identity->emailVerified
+            || $email === ''
+            || filter_var($email, FILTER_VALIDATE_EMAIL) === false
+        ) {
+            throw new SsoException(SsoException::UNLINKED);
+        }
+
+        // Immer erst nach einem bestehenden Account suchen, damit kein Duplikat
+        // erzeugt wird, wenn LINK_BY_EMAIL deaktiviert ist.
+        $user = User::query()->where('email', $email)->first();
 
         if ($user instanceof User) {
-            Identity::query()->create([
-                ...$identity->details(),
-                'user_id' => $user->id,
-                'provider' => $identity->provider,
-                'provider_user_id' => $identity->id,
-                'last_login_at' => now(),
-            ]);
+            if (! $this->config->boolean(SsoSettings::LINK_BY_EMAIL)) {
+                throw new SsoException(SsoException::UNLINKED);
+            }
         } else {
             if (! $this->config->boolean(SsoSettings::AUTO_CREATE_USERS)) {
                 throw new SsoException(SsoException::UNLINKED);
             }
 
-            $user = $this->createPanelUser($identity);
+            $user = $this->createPanelUser($identity, $email);
         }
 
-        
+        // Sowohl den per E-Mail gefundenen als auch den neu angelegten User
+        // mit der externen Provider-Identität verknüpfen.
+        Identity::query()->create([
+            ...$identity->details(),
+            'email' => $email,
+            'user_id' => $user->id,
+            'provider' => $identity->provider,
+            'provider_user_id' => $identity->id,
+            'last_login_at' => now(),
+        ]);
+
         return $user;
     }
 
-    /**
-     * @param User
-     * @param ExternalIdentity
-     * @return Identity
-     */
     public function link(User $user, ExternalIdentity $identity): Identity
     {
         $owner = $this->find($identity);
+
         if ($owner instanceof Identity && $owner->user_id !== $user->id) {
             throw new SsoException(SsoException::TAKEN);
         }
 
         return Identity::query()->updateOrCreate(
-            ['user_id' => $user->id, 'provider' => $identity->provider],
-            [...$identity->details(), 'provider_user_id' => $identity->id],
+            [
+                'user_id' => $user->id,
+                'provider' => $identity->provider,
+            ],
+            [
+                ...$identity->details(),
+                'provider_user_id' => $identity->id,
+            ],
         );
     }
 
-    /**
-     * @param ExternalIdentity
-     * @return Identity|null
-     */
     private function find(ExternalIdentity $identity): ?Identity
     {
         return Identity::query()
@@ -93,34 +105,50 @@ final class IdentityResolver
             ->first();
     }
 
-    /**
-     * @param ExternalIdentity
-     * @return User|null
-     */
-    private function userByVerifiedEmail(ExternalIdentity $identity): ?User
+    private function createPanelUser(ExternalIdentity $identity, string $email): User
     {
-        if (! $this->config->boolean(SsoSettings::LINK_BY_EMAIL) || ! $identity->emailVerified || $identity->email === null) {
-            return null;
+        $fullName = trim($identity->name ?? '');
+        $nameParts = preg_split('/\s+/u', $fullName, 2) ?: [];
+
+        $firstName = trim($identity->firstName ?? '');
+        if ($firstName === '') {
+            $firstName = trim($nameParts[0] ?? '');
+        }
+        if ($firstName === '') {
+            $firstName = 'SSO';
         }
 
-        return User::query()->where('email', $identity->email)->first();
-    }
+        $lastName = trim($identity->lastName ?? '');
+        if ($lastName === '') {
+            $lastName = trim($nameParts[1] ?? '');
+        }
+        if ($lastName === '') {
+            $lastName = 'User';
+        }
 
-    private function createPanelUser(ExternalIdentity $identity): ?User 
-    {
-        $email = mb_strtolower(trim($identity->email ?? ''));
+        $localPart = explode('@', $email, 2)[0];
+        $baseUsername = preg_replace('/[^a-z0-9_]/i', '_', $localPart) ?? '';
+        $baseUsername = trim(substr($baseUsername, 0, 191), '_');
 
-        $username = mb_strtolower(trim($identity->name ?? ''));
+        if ($baseUsername === '') {
+            $baseUsername = 'sso_user';
+        }
 
-        $firstName = mb_strtolower(trim($identity->firstName ?? $username));
-        $lastName = mb_strtolower(trim($identity->lastName ?? $username));
+        $username = $baseUsername;
+        $suffix = 2;
 
-        $this->users->create([
+        while (User::query()->where('username', $username)->exists()) {
+            $suffixText = '_' . $suffix++;
+            $username = substr($baseUsername, 0, 191 - strlen($suffixText)) . $suffixText;
+        }
+
+        return $this->users->create([
             'email' => $email,
             'username' => $username,
-            'name_first' => $firstName,
-            'name_last' => $lastName,
+            'name_first' => mb_substr($firstName, 0, 191),
+            'name_last' => mb_substr($lastName, 0, 191),
             'root_admin' => false,
+            // Kein Passwort übergeben: Pterodactyl generiert ein zufälliges.
         ]);
     }
 }
