@@ -8,5 +8,8 @@
         "dev": "vite build --watch",
         "typecheck": "tsc --noEmit",
         "test": "vitest run --config vitest.config.ts"
+    },
+    "dependencies": {
+        "vite": "^8.3.4"
     }
 }
