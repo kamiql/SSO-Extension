@@ -10,6 +10,7 @@ Lets users sign in to the panel with an external account. Built as a module that
 - Google
 - GitLab
 - Microsoft
+- Steam
 
 ## Install
 
@@ -81,5 +82,13 @@ Any exception thrown in `enrich()` fails the sign-in. If the extra data is optio
 OAuth 2 providers use PKCE (S256) by default: the authorization request carries a `code_challenge`, and the token request carries the matching `code_verifier`. If a provider rejects these parameters, override `usesPkce()` to return `false`.
 
 A provider that does not extend `Sso\OAuth2Provider` implements `Sso\Contracts\IdentityProvider` directly. If it uses OAuth 2 and supports PKCE, implement `Sso\Contracts\SupportsPkce` instead, and the extension will generate the verifier and pass it in.
+
+If the callback does not carry an OAuth 2 `code` query parameter, implement `Sso\Contracts\ReadsCallback` as well. Its `callbackCode()` receives the callback request after the state has been checked, and returns the string that is passed to `identify()` as `$code`, or `null` when the user cancelled. Steam uses it to pass on its OpenID 2.0 assertion, see `providers/Steam/SteamProvider.php`.
+
+## Steam
+
+Steam only offers OpenID 2.0, so it needs no client ID or secret: enabling it is enough. The optional Web API key (from https://steamcommunity.com/dev/apikey) is used to fetch the Steam display name and avatar; without one, the Steam ID is shown instead.
+
+Steam does not share an email address, so "Link accounts by verified email" never applies to it. Users have to connect Steam from Account > Connections before they can sign in with it.
 
 Without a `brand.tsx`, the provider gets a neutral button. With one, it exports its colours and logo, keyed by the provider's `id` (see `providers/Discord/brand.tsx`). Rebuild the frontend (`npm run build`) after adding or changing a brand.

@@ -27,6 +27,7 @@ use Sso\Data\ExternalIdentity;
 use Sso\Models\Identity;
 use Sso\Pkce;
 use Sso\ProviderRegistry;
+use Symfony\Component\HttpFoundation\HeaderUtils;
 
 use function pterodactylTestCase;
 
@@ -263,6 +264,123 @@ test('a provider that cannot build its authorization url returns to the login pa
     expect(session()->has('sso.flow'))->toBeFalse();
 });
 
+test('starting a steam login sends the browser to steam with the state in the return url', function (): void {
+    configure(['steam_enabled' => true]);
+
+    $location = $this->get('/extensions/sso/steam/redirect')->assertRedirect()->headers->get('Location');
+
+    expect($location)->toStartWith('https://steamcommunity.com/openid/login?');
+    $query = HeaderUtils::parseQuery((string) parse_url($location, PHP_URL_QUERY));
+    expect($query)->toMatchArray([
+        'openid.ns' => 'http://specs.openid.net/auth/2.0',
+        'openid.mode' => 'checkid_setup',
+        'openid.return_to' => url('/extensions/sso/steam/callback').'?state='.session('sso.flow.state'),
+        'openid.realm' => url('/').'/',
+        'openid.identity' => 'http://specs.openid.net/auth/2.0/identifier_select',
+        'openid.claimed_id' => 'http://specs.openid.net/auth/2.0/identifier_select',
+    ]);
+    expect(session('sso.flow'))->toMatchArray(['provider' => 'steam', 'intent' => 'login', 'code_verifier' => null]);
+});
+
+test('a verified steam assertion signs in the linked user and stores the steam profile', function (): void {
+    configure(['steam_enabled' => true, 'steam_api_key' => 'steam-key']);
+    $user = user();
+    Identity::query()->create(['user_id' => $user->id, 'provider' => 'steam', 'provider_user_id' => '76561197960435530']);
+    fakeSteam();
+
+    steamCallback($this)->assertRedirect('/');
+
+    $this->assertAuthenticatedAs($user);
+    expect(Identity::query()->sole()->only(['name', 'email', 'avatar_url']))->toBe([
+        'name' => 'Robin',
+        'email' => null,
+        'avatar_url' => 'https://avatars.steamstatic.com/robin_full.jpg',
+    ]);
+    Http::assertSent(function (HttpRequest $request): bool {
+        $body = HeaderUtils::parseQuery($request->body());
+
+        return $request->url() === 'https://steamcommunity.com/openid/login'
+            && $body['openid.mode'] === 'check_authentication'
+            && $body['openid.sig'] === 'c2lnbmF0dXJl'
+            && $body['openid.claimed_id'] === 'https://steamcommunity.com/openid/id/76561197960435530';
+    });
+    Http::assertSent(fn (HttpRequest $request): bool => str_starts_with($request->url(), 'https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/')
+        && $request['key'] === 'steam-key'
+        && $request['steamids'] === '76561197960435530');
+});
+
+test('a steam account can be linked without a web api key', function (): void {
+    configure(['steam_enabled' => true]);
+    $user = user();
+    fakeSteam();
+
+    $this->actingAs($user);
+    steamCallback($this, intent: 'link')->assertRedirect('/account/connections?sso_linked=steam');
+
+    expect(Identity::query()->sole()->only(['user_id', 'provider_user_id', 'name']))->toBe([
+        'user_id' => $user->id,
+        'provider_user_id' => '76561197960435530',
+        'name' => '76561197960435530',
+    ]);
+    Http::assertSentCount(1);
+});
+
+test('an unlinked steam account is refused because steam shares no email', function (): void {
+    configure(['steam_enabled' => true, 'link_by_email' => true]);
+    fakeSteam();
+
+    steamCallback($this)->assertRedirect('/auth/login?sso_error=unlinked');
+
+    $this->assertGuest();
+});
+
+test('a steam assertion that steam does not confirm is refused', function (): void {
+    configure(['steam_enabled' => true]);
+    Identity::query()->create(['user_id' => user()->id, 'provider' => 'steam', 'provider_user_id' => '76561197960435530']);
+    fakeSteam(false);
+
+    steamCallback($this)->assertRedirect('/auth/login?sso_error=provider');
+
+    $this->assertGuest();
+});
+
+test('a cancelled steam login returns to the login page', function (): void {
+    configure(['steam_enabled' => true]);
+    fakeSteam();
+
+    $this->get('/extensions/sso/steam/redirect');
+    $state = session('sso.flow.state');
+    $this->get('/extensions/sso/steam/callback?'.http_build_query(['state' => $state, 'openid.ns' => 'http://specs.openid.net/auth/2.0', 'openid.mode' => 'cancel']))
+        ->assertRedirect('/auth/login?sso_error=denied');
+
+    Http::assertNothingSent();
+});
+
+test('a steam assertion issued for another login attempt is refused', function (): void {
+    configure(['steam_enabled' => true]);
+    fakeSteam();
+
+    steamCallback($this, ['openid.return_to' => url('/extensions/sso/steam/callback').'?state=stolen'])->assertRedirect('/auth/login?sso_error=state');
+
+    Http::assertNothingSent();
+});
+
+test('a steam assertion that is tampered with is refused before asking steam', function (array $overrides): void {
+    configure(['steam_enabled' => true]);
+    fakeSteam();
+
+    steamCallback($this, $overrides)->assertRedirect('/auth/login?sso_error=provider');
+
+    Http::assertNothingSent();
+    $this->assertGuest();
+})->with([
+    'unsigned claimed id' => [['openid.signed' => 'signed,op_endpoint,identity,return_to,response_nonce,assoc_handle']],
+    'foreign endpoint' => [['openid.op_endpoint' => 'https://steam.example/openid/login']],
+    'foreign return url' => [['openid.return_to' => 'https://panel.example/extensions/sso/steam/callback?state=STATE']],
+    'non steam identity' => [['openid.claimed_id' => 'https://openid.example/id/76561197960435530', 'openid.identity' => 'https://openid.example/id/76561197960435530']],
+    'mismatched identity' => [['openid.identity' => 'https://steamcommunity.com/openid/id/76561197960435531']],
+]);
+
 /**
  * @param array
  */
@@ -315,6 +433,50 @@ function callback(IntegrationTestCase $test, string $intent = 'login'): TestResp
     $test->get($intent === 'link' ? '/extensions/sso/discord/link' : '/extensions/sso/discord/redirect')->assertRedirect();
 
     return $test->get('/extensions/sso/discord/callback?code=abc&state='.session('sso.flow.state'));
+}
+
+/**
+ * @param bool
+ */
+function fakeSteam(bool $valid = true): void
+{
+    Http::swap(new Factory);
+    Http::fake([
+        'steamcommunity.com/openid/login' => Http::response("ns:http://specs.openid.net/auth/2.0\nis_valid:".($valid ? 'true' : 'false')."\n"),
+        'api.steampowered.com/*' => Http::response(['response' => ['players' => [[
+            'steamid' => '76561197960435530',
+            'personaname' => 'Robin',
+            'avatarfull' => 'https://avatars.steamstatic.com/robin_full.jpg',
+        ]]]]),
+    ]);
+}
+
+/**
+ * @param IntegrationTestCase
+ * @param array
+ * @param string
+ * @return TestResponse
+ */
+function steamCallback(IntegrationTestCase $test, array $overrides = [], string $intent = 'login'): TestResponse
+{
+    $test->get($intent === 'link' ? '/extensions/sso/steam/link' : '/extensions/sso/steam/redirect')->assertRedirect();
+    $state = session('sso.flow.state');
+    $claimedId = 'https://steamcommunity.com/openid/id/76561197960435530';
+    $assertion = array_map(fn (string $value): string => str_replace('STATE', $state, $value), [
+        'openid.ns' => 'http://specs.openid.net/auth/2.0',
+        'openid.mode' => 'id_res',
+        'openid.op_endpoint' => 'https://steamcommunity.com/openid/login',
+        'openid.claimed_id' => $claimedId,
+        'openid.identity' => $claimedId,
+        'openid.return_to' => url('/extensions/sso/steam/callback').'?state='.$state,
+        'openid.response_nonce' => '2026-10-19T12:00:00Zr4nd0m',
+        'openid.assoc_handle' => '1234567890',
+        'openid.signed' => 'signed,op_endpoint,claimed_id,identity,return_to,response_nonce,assoc_handle',
+        'openid.sig' => 'c2lnbmF0dXJl',
+        ...$overrides,
+    ]);
+
+    return $test->get('/extensions/sso/steam/callback?'.http_build_query(['state' => $state, ...$assertion], '', '&', PHP_QUERY_RFC3986));
 }
 
 final class BrokenProvider implements IdentityProvider
