@@ -6,11 +6,11 @@ namespace Sso;
 
 use Illuminate\Support\Facades\Http;
 use Pterodactyl\Services\Extensions\ExtensionSettingDefinition;
-use Sso\Contracts\IdentityProvider;
+use Sso\Contracts\SupportsPkce;
 use Sso\Data\ExternalIdentity;
 use Sso\Exceptions\SsoException;
 
-abstract class OAuth2Provider implements IdentityProvider
+abstract class OAuth2Provider implements SupportsPkce
 {
     /**
      * @var SsoSettings
@@ -60,7 +60,15 @@ abstract class OAuth2Provider implements IdentityProvider
     /**
      * @inheritdoc
      */
-    public function authorizationUrl(string $state, string $redirectUri): string
+    public function usesPkce(): bool
+    {
+        return true;
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function authorizationUrl(string $state, string $redirectUri, ?string $codeChallenge = null): string
     {
         return $this->authorizeEndpoint().'?'.http_build_query([
             ...$this->authorizationParameters(),
@@ -69,20 +77,26 @@ abstract class OAuth2Provider implements IdentityProvider
             'redirect_uri' => $redirectUri,
             'scope' => implode(' ', $this->scopes()),
             'state' => $state,
+            ...($codeChallenge === null ? [] : ['code_challenge' => $codeChallenge, 'code_challenge_method' => 'S256']),
         ], '', '&', PHP_QUERY_RFC3986);
     }
 
     /**
      * @inheritdoc
      */
-    public function identify(string $code, string $redirectUri): ExternalIdentity
+    public function identify(string $code, string $redirectUri, ?string $codeVerifier = null): ExternalIdentity
     {
+        if ($codeVerifier !== null && ! Pkce::isValidVerifier($codeVerifier)) {
+            throw new SsoException(SsoException::STATE);
+        }
+
         $token = Http::asForm()->acceptJson()->timeout(10)->post($this->tokenEndpoint(), [
             'grant_type' => 'authorization_code',
             'code' => $code,
             'redirect_uri' => $redirectUri,
             'client_id' => $this->config->string($this->key('client_id')),
             'client_secret' => $this->config->string($this->key('client_secret')),
+            ...($codeVerifier === null ? [] : ['code_verifier' => $codeVerifier]),
         ])->throw()->json('access_token');
 
         if (! is_string($token) || $token === '') {

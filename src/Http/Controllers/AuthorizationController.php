@@ -9,8 +9,10 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Pterodactyl\Contracts\Users\CompletesLogins;
 use Pterodactyl\Models\User;
+use Sso\Contracts\SupportsPkce;
 use Sso\Data\ExternalIdentity;
 use Sso\Exceptions\SsoException;
+use Sso\Pkce;
 use Sso\ProviderRegistry;
 use Sso\Services\IdentityResolver;
 use Sso\SsoRoutes;
@@ -110,9 +112,23 @@ final class AuthorizationController
         }
 
         $state = Str::random(40);
-        $request->session()->put(self::FLOW, ['provider' => $id, 'state' => $state, 'intent' => $intent]);
+        $verifier = $provider instanceof SupportsPkce && $provider->usesPkce() ? Pkce::verifier() : null;
 
-        return redirect()->away($provider->authorizationUrl($state, SsoRoutes::callback($id)));
+        try {
+            $url = $provider instanceof SupportsPkce
+                ? $provider->authorizationUrl($state, SsoRoutes::callback($id), $verifier === null ? null : Pkce::challenge($verifier))
+                : $provider->authorizationUrl($state, SsoRoutes::callback($id));
+        } catch (SsoException $exception) {
+            return $this->failed($intent, $exception->reason);
+        } catch (Throwable $throwable) {
+            report($throwable);
+
+            return $this->failed($intent, SsoException::PROVIDER);
+        }
+
+        $request->session()->put(self::FLOW, ['provider' => $id, 'state' => $state, 'intent' => $intent, 'code_verifier' => $verifier]);
+
+        return redirect()->away($url);
     }
 
     /**
@@ -139,8 +155,12 @@ final class AuthorizationController
             throw new SsoException(SsoException::UNAVAILABLE);
         }
 
+        $verifier = $flow['code_verifier'] ?? null;
+
         try {
-            return $provider->identify($code, SsoRoutes::callback($id));
+            return $provider instanceof SupportsPkce
+                ? $provider->identify($code, SsoRoutes::callback($id), is_string($verifier) ? $verifier : null)
+                : $provider->identify($code, SsoRoutes::callback($id));
         } catch (SsoException $exception) {
             throw $exception;
         } catch (Throwable $throwable) {

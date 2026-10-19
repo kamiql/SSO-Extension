@@ -21,7 +21,12 @@ use Pterodactyl\Services\Extensions\ExtensionProviderLoader;
 use Pterodactyl\Services\Extensions\ExtensionRepository;
 use Pterodactyl\Services\Extensions\ExtensionSettingsRegistry;
 use Pterodactyl\Tests\Integration\IntegrationTestCase;
+use RuntimeException;
+use Sso\Contracts\IdentityProvider;
+use Sso\Data\ExternalIdentity;
 use Sso\Models\Identity;
+use Sso\Pkce;
+use Sso\ProviderRegistry;
 
 use function pterodactylTestCase;
 
@@ -78,8 +83,11 @@ test('starting a login sends the browser to discord with a state bound to the se
         'redirect_uri' => url('/extensions/sso/discord/callback'),
         'scope' => 'identify email',
         'prompt' => 'none',
+        'code_challenge_method' => 'S256',
     ]);
     expect($query['state'])->toBe(session('sso.flow.state'));
+    expect(Pkce::isValidVerifier(session('sso.flow.code_verifier')))->toBeTrue();
+    expect($query['code_challenge'])->toBe(Pkce::challenge(session('sso.flow.code_verifier')));
     expect(session('sso.flow'))->toMatchArray(['provider' => 'discord', 'intent' => 'login']);
 });
 
@@ -206,6 +214,55 @@ test('users can list and remove their connections', function (): void {
     expect(Identity::query()->count())->toBe(1);
 });
 
+test('PKCE S256 matches the RFC 7636 example', function (): void {
+    expect(Pkce::challenge('dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk'))->toBe('E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM');
+});
+
+test('the token request carries the PKCE verifier stored in the session', function (): void {
+    $user = user();
+    Identity::query()->create(['user_id' => $user->id, 'provider' => 'discord', 'provider_user_id' => '80351110224678912']);
+    fakeDiscord();
+
+    $this->get('/extensions/sso/discord/redirect');
+    $verifier = session('sso.flow.code_verifier');
+    $this->get('/extensions/sso/discord/callback?code=abc&state='.session('sso.flow.state'))->assertRedirect('/');
+
+    $this->assertAuthenticatedAs($user);
+    Http::assertSent(fn (HttpRequest $request): bool => $request->url() === 'https://discord.com/api/oauth2/token' && $request['code_verifier'] === $verifier);
+});
+
+test('a login started before PKCE was enabled completes without a verifier', function (): void {
+    $user = user();
+    Identity::query()->create(['user_id' => $user->id, 'provider' => 'discord', 'provider_user_id' => '80351110224678912']);
+    fakeDiscord();
+
+    $this->get('/extensions/sso/discord/redirect');
+    session()->forget('sso.flow.code_verifier');
+    $this->get('/extensions/sso/discord/callback?code=abc&state='.session('sso.flow.state'))->assertRedirect('/');
+
+    $this->assertAuthenticatedAs($user);
+    Http::assertSent(fn (HttpRequest $request): bool => $request->url() === 'https://discord.com/api/oauth2/token' && ! isset($request['code_verifier']));
+});
+
+test('a malformed PKCE verifier in the session is refused before contacting the provider', function (): void {
+    fakeDiscord();
+
+    $this->get('/extensions/sso/discord/redirect');
+    session()->put('sso.flow.code_verifier', 'too-short');
+    $this->get('/extensions/sso/discord/callback?code=abc&state='.session('sso.flow.state'))->assertRedirect('/auth/login?sso_error=state');
+
+    Http::assertNothingSent();
+    $this->assertGuest();
+});
+
+test('a provider that cannot build its authorization url returns to the login page without starting a flow', function (): void {
+    app(ProviderRegistry::class)->register(BrokenProvider::class);
+
+    $this->get('/extensions/sso/broken/redirect')->assertRedirect('/auth/login?sso_error=provider');
+
+    expect(session()->has('sso.flow'))->toBeFalse();
+});
+
 /**
  * @param array
  */
@@ -258,4 +315,55 @@ function callback(IntegrationTestCase $test, string $intent = 'login'): TestResp
     $test->get($intent === 'link' ? '/extensions/sso/discord/link' : '/extensions/sso/discord/redirect')->assertRedirect();
 
     return $test->get('/extensions/sso/discord/callback?code=abc&state='.session('sso.flow.state'));
+}
+
+final class BrokenProvider implements IdentityProvider
+{
+    /**
+     * @inheritdoc
+     */
+    public function id(): string
+    {
+        return 'broken';
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function name(): string
+    {
+        return 'Broken';
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function settings(): array
+    {
+        return [];
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function enabled(): bool
+    {
+        return true;
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function authorizationUrl(string $state, string $redirectUri): string
+    {
+        throw new RuntimeException('Authorization endpoint is not configured.');
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function identify(string $code, string $redirectUri): ExternalIdentity
+    {
+        throw new RuntimeException('Token endpoint is not configured.');
+    }
 }
