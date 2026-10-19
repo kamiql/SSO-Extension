@@ -9,6 +9,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Pterodactyl\Contracts\Users\CompletesLogins;
 use Pterodactyl\Models\User;
+use Sso\Contracts\ReadsCallback;
 use Sso\Contracts\SupportsPkce;
 use Sso\Data\ExternalIdentity;
 use Sso\Exceptions\SsoException;
@@ -145,14 +146,14 @@ final class AuthorizationController
             throw new SsoException(SsoException::STATE);
         }
 
-        $code = $request->query('code');
-        if ($request->query('error') !== null || ! is_string($code) || $code === '') {
-            throw new SsoException(SsoException::DENIED);
-        }
-
         $provider = $this->providers->find($id);
         if ($provider === null || ! $provider->enabled()) {
             throw new SsoException(SsoException::UNAVAILABLE);
+        }
+
+        $code = $provider instanceof ReadsCallback ? $provider->callbackCode($request) : $request->query('code');
+        if ($request->query('error') !== null || ! is_string($code) || $code === '') {
+            throw new SsoException(SsoException::DENIED);
         }
 
         $verifier = $flow['code_verifier'] ?? null;
