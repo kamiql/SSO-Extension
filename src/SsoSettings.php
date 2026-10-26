@@ -12,6 +12,8 @@ final class SsoSettings
 {
     public const string LINK_BY_EMAIL = 'link_by_email';
 
+    public const string AUTO_CREATE_BY_VERIFIED_EMAIL = 'auto_create_by_verified_email';
+
     /**
      * @var ExtensionSettingsRegistry
      */

@@ -11,6 +11,25 @@ Lets users sign in to the panel with an external account. Built as a module that
 - GitLab
 - Microsoft
 - Steam
+- Custom OpenID Connect (for Authentik and other self-hosted OIDC providers)
+
+## Account creation and email linking
+
+Under **Admin > Extensions > Single Sign-On**, configure:
+
+- **Link accounts by verified email** to link an external identity to an existing panel account with the same verified email address.
+- **Auto-create accounts by verified email** to create a new panel account when a provider returns a verified email address that does not already belong to a panel account. New accounts receive a random password and a generated username; only enable this for trusted providers that reliably verify email addresses.
+
+Both settings are disabled by default. Auto-creation does not silently attach an external identity to an existing account; use the separate linking setting for that behavior.
+
+## Custom OpenID Connect provider
+
+The **Custom OIDC** settings tab supports one configurable self-hosted OIDC provider. Set its display name (for example, `Authentik`), client ID and secret, and choose one of these endpoint modes:
+
+- **Fetch endpoints from .well-known** (default): enter the issuer URL. SSO reads its authorization, token and user-info endpoints from `<issuer>/.well-known/openid-configuration` and caches the document for 15 minutes.
+- **Manual endpoints**: turn off discovery and enter the authorization, token and user-info endpoint URLs yourself.
+
+Register the full panel callback URL (`https://<panel-origin>/extensions/sso/custom/callback`) at the identity provider. The provider requests the configured space-separated scopes and always includes `openid`. It expects standard OIDC user-info claims (`sub`, `email`, `email_verified`, `name` or `preferred_username`, and optionally `picture`).
 
 ## Install
 

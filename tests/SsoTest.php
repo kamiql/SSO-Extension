@@ -145,6 +145,50 @@ test('an unlinked discord account is refused unless email linking is enabled and
     ]);
 });
 
+test('auto-create only creates a panel account for a verified email', function (): void {
+    configure(['auto_create_by_verified_email' => true]);
+    fakeDiscord(['verified' => false]);
+
+    callback($this)->assertRedirect('/auth/login?sso_error=unlinked');
+    $this->assertGuest();
+
+    fakeDiscord();
+    callback($this)->assertRedirect('/');
+    $this->assertAuthenticated();
+    $this->users[] = auth()->user()->id;
+    expect(auth()->user()->email)->toBe('nelly@discord.test');
+    expect(Identity::query()->sole()->provider)->toBe('discord');
+});
+
+test('custom OIDC discovers endpoints from the issuer well-known document', function (): void {
+    configure([
+        'custom_enabled' => true,
+        'custom_name' => 'Authentik',
+        'custom_client_id' => 'custom-client',
+        'custom_client_secret' => 'custom-secret',
+        'custom_auto_fetch' => true,
+        'custom_issuer_url' => 'https://auth.example.test/application/o/panel/',
+    ]);
+    Http::fake([
+        'https://auth.example.test/application/o/panel/.well-known/openid-configuration' => Http::response([
+            'issuer' => 'https://auth.example.test/application/o/panel/',
+            'authorization_endpoint' => 'https://auth.example.test/application/o/authorize/',
+            'token_endpoint' => 'https://auth.example.test/application/o/token/',
+            'userinfo_endpoint' => 'https://auth.example.test/application/o/userinfo/',
+        ]),
+    ]);
+
+    $this->getJson('/extensions/sso/providers')->assertOk()->assertJsonFragment([
+        'id' => 'custom',
+        'name' => 'Authentik',
+        'login_url' => '/extensions/sso/custom/redirect',
+    ]);
+
+    $response = $this->get('/extensions/sso/custom/redirect')->assertRedirect();
+    expect($response->headers->get('Location'))->toStartWith('https://auth.example.test/application/o/authorize/?');
+    Http::assertSent(fn (HttpRequest $request): bool => $request->url() === 'https://auth.example.test/application/o/panel/.well-known/openid-configuration');
+});
+
 test('accounts with two factor authentication are handed to the native checkpoint', function (): void {
     $user = user(['use_totp' => true, 'totp_secret' => encrypt(str_repeat('a', 16))]);
     Identity::query()->create(['user_id' => $user->id, 'provider' => 'discord', 'provider_user_id' => '80351110224678912']);

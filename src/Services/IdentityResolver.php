@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Sso\Services;
 
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Str;
 use Pterodactyl\Models\User;
 use Sso\Data\ExternalIdentity;
 use Sso\Exceptions\SsoException;
@@ -39,7 +41,13 @@ final class IdentityResolver
         }
 
         $user = $this->userByVerifiedEmail($identity);
-        if (! $user instanceof User || Identity::query()->where('user_id', $user->id)->where('provider', $identity->provider)->exists()) {
+        $created = false;
+        if (! $user instanceof User) {
+            $user = $this->createByVerifiedEmail($identity);
+            $created = $user instanceof User;
+        }
+
+        if (! $user instanceof User || (! $created && Identity::query()->where('user_id', $user->id)->where('provider', $identity->provider)->exists())) {
             throw new SsoException(SsoException::UNLINKED);
         }
 
@@ -82,6 +90,64 @@ final class IdentityResolver
             ->where('provider', $identity->provider)
             ->where('provider_user_id', $identity->id)
             ->first();
+    }
+
+
+    /**
+     * Create a panel user only when the identity contains a verified, valid email
+     * that is not already owned by an existing panel account.
+     *
+     * @param ExternalIdentity
+     * @return User|null
+     */
+    private function createByVerifiedEmail(ExternalIdentity $identity): ?User
+    {
+        $email = $identity->email;
+        if (! $this->config->boolean(SsoSettings::AUTO_CREATE_BY_VERIFIED_EMAIL)
+            || ! $identity->emailVerified
+            || $email === null
+            || filter_var($email, FILTER_VALIDATE_EMAIL) === false
+            || User::query()->where('email', $email)->exists()) {
+            return null;
+        }
+
+        $local = explode('@', $email, 2)[0];
+        $base = Str::lower((string) preg_replace('/[^a-z0-9_-]+/i', '', $local));
+        $base = trim(substr($base, 0, 40), '-_');
+        if ($base === '') {
+            $base = 'user';
+        }
+
+        $username = $base;
+        for ($suffix = 1; User::query()->where('username', $username)->exists(); $suffix++) {
+            $username = substr($base, 0, 40).'-'.$suffix;
+        }
+
+        $user = new User();
+        $attributes = [
+            'username' => $username,
+            'email' => $email,
+            'password' => Hash::make(Str::random(64)),
+            'language' => config('app.locale', 'en'),
+            'root_admin' => false,
+            'use_totp' => false,
+        ];
+
+        $displayName = preg_split('/\s+/', trim($identity->name), 2) ?: [];
+        $schema = $user->getConnection()->getSchemaBuilder();
+        if ($schema->hasColumn($user->getTable(), 'email_verified_at')) {
+            $attributes['email_verified_at'] = now();
+        }
+
+        foreach ([['name_first', $displayName[0] ?? null], ['name_last', $displayName[1] ?? null], ['first_name', $displayName[0] ?? null], ['last_name', $displayName[1] ?? null]] as [$column, $value]) {
+            if ($value !== null && $schema->hasColumn($user->getTable(), $column)) {
+                $attributes[$column] = $value;
+            }
+        }
+
+        $user->forceFill($attributes)->save();
+
+        return $user;
     }
 
     /**

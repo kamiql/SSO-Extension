@@ -30,6 +30,11 @@ final class SsoServiceProvider extends ExtensionProvider
                 ->help('Sign in a user whose panel email matches the verified email of an external account that is not linked yet, and link it. Only enable this for providers that verify email addresses.')
                 ->field('toggle')
                 ->normalizeUsing(fn (mixed $value): bool => $value === true),
+            ExtensionSettingDefinition::make(SsoSettings::AUTO_CREATE_BY_VERIFIED_EMAIL, SsoSettings::AUTO_CREATE_BY_VERIFIED_EMAIL, false, ['boolean'])
+                ->label('Auto-create accounts by verified email')
+                ->help('Create a new panel account when a provider returns a verified email address that does not belong to an existing panel account. Only enable this for trusted providers that reliably verify email addresses.')
+                ->field('toggle')
+                ->normalizeUsing(fn (mixed $value): bool => $value === true),
         ]));
     }
 
