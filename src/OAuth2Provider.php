@@ -4,11 +4,14 @@ declare(strict_types=1);
 
 namespace Sso;
 
+use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Pterodactyl\Services\Extensions\ExtensionSettingDefinition;
 use Sso\Contracts\SupportsPkce;
 use Sso\Data\ExternalIdentity;
 use Sso\Exceptions\SsoException;
+use Throwable;
 
 abstract class OAuth2Provider implements SupportsPkce
 {
@@ -87,29 +90,94 @@ abstract class OAuth2Provider implements SupportsPkce
     public function identify(string $code, string $redirectUri, ?string $codeVerifier = null): ExternalIdentity
     {
         if ($codeVerifier !== null && ! Pkce::isValidVerifier($codeVerifier)) {
+            Log::warning('SSO OAuth PKCE verifier was invalid', ['provider' => $this->id()]);
             throw new SsoException(SsoException::STATE);
         }
 
-        $token = Http::asForm()->acceptJson()->timeout(10)->post($this->tokenEndpoint(), [
-            'grant_type' => 'authorization_code',
-            'code' => $code,
-            'redirect_uri' => $redirectUri,
-            'client_id' => $this->config->string($this->key('client_id')),
-            'client_secret' => $this->config->string($this->key('client_secret')),
-            ...($codeVerifier === null ? [] : ['code_verifier' => $codeVerifier]),
-        ])->throw()->json('access_token');
+        Log::debug('SSO OAuth token exchange started', [
+            'provider' => $this->id(),
+            'pkce_verifier_present' => $codeVerifier !== null,
+        ]);
+
+        try {
+            $tokenResponse = Http::asForm()->acceptJson()->timeout(10)->post($this->tokenEndpoint(), [
+                'grant_type' => 'authorization_code',
+                'code' => $code,
+                'redirect_uri' => $redirectUri,
+                'client_id' => $this->config->string($this->key('client_id')),
+                'client_secret' => $this->config->string($this->key('client_secret')),
+                ...($codeVerifier === null ? [] : ['code_verifier' => $codeVerifier]),
+            ])->throw();
+        } catch (Throwable $throwable) {
+            Log::warning('SSO OAuth token exchange failed', [
+                'provider' => $this->id(),
+                'exception_class' => $throwable::class,
+                'http_status' => $throwable instanceof RequestException ? $throwable->response->status() : null,
+            ]);
+            throw $throwable;
+        }
+
+        $token = $tokenResponse->json('access_token');
+        Log::debug('SSO OAuth token response received', [
+            'provider' => $this->id(),
+            'http_status' => $tokenResponse->status(),
+            'access_token_present' => is_string($token) && $token !== '',
+        ]);
 
         if (! is_string($token) || $token === '') {
+            Log::warning('SSO OAuth token response did not contain an access token', ['provider' => $this->id()]);
             throw new SsoException(SsoException::PROVIDER);
         }
 
-        $user = Http::acceptJson()->timeout(10)->withToken($token)->get($this->userEndpoint())->throw()->json();
+        try {
+            $userResponse = Http::acceptJson()->timeout(10)->withToken($token)->get($this->userEndpoint())->throw();
+        } catch (Throwable $throwable) {
+            Log::warning('SSO OAuth user-info request failed', [
+                'provider' => $this->id(),
+                'exception_class' => $throwable::class,
+                'http_status' => $throwable instanceof RequestException ? $throwable->response->status() : null,
+            ]);
+            throw $throwable;
+        }
 
+        $user = $userResponse->json();
         if (! is_array($user)) {
+            Log::warning('SSO OAuth user-info response was not a JSON object', [
+                'provider' => $this->id(),
+                'http_status' => $userResponse->status(),
+            ]);
             throw new SsoException(SsoException::PROVIDER);
         }
 
-        return $this->mapIdentity($this->enrich($token, $user));
+        Log::debug('SSO OAuth user-info claims received', [
+            'provider' => $this->id(),
+            'http_status' => $userResponse->status(),
+            'subject_present' => is_string($user['sub'] ?? null) || is_int($user['sub'] ?? null) || is_string($user['id'] ?? null) || is_int($user['id'] ?? null),
+            'email_present' => is_string($user['email'] ?? null) && trim($user['email']) !== '',
+            'email_verified_present' => array_key_exists('email_verified', $user),
+            'email_verified_type' => get_debug_type($user['email_verified'] ?? null),
+            'email_verified_strict_true' => ($user['email_verified'] ?? false) === true,
+            'display_name_present' => collect(['name', 'preferred_username', 'nickname'])->contains(fn (string $key): bool => is_string($user[$key] ?? null) && trim($user[$key]) !== ''),
+        ]);
+
+        try {
+            $identity = $this->mapIdentity($this->enrich($token, $user));
+        } catch (Throwable $throwable) {
+            Log::warning('SSO OAuth user-info claims could not be mapped to an identity', [
+                'provider' => $this->id(),
+                'exception_class' => $throwable::class,
+            ]);
+            throw $throwable;
+        }
+
+        Log::debug('SSO OAuth identity mapped', [
+            'provider' => $identity->provider,
+            'subject_present' => $identity->id !== '',
+            'email_present' => $identity->email !== null && $identity->email !== '',
+            'email_verified' => $identity->emailVerified,
+        ]);
+
+        return $identity;
     }
 
     /**

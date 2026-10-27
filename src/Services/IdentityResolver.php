@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Sso\Services;
 
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Pterodactyl\Models\User;
 use Sso\Data\ExternalIdentity;
@@ -33,21 +34,48 @@ final class IdentityResolver
      */
     public function userFor(ExternalIdentity $identity): User
     {
+        Log::debug('SSO identity resolution started', [
+            ...$this->identityContext($identity),
+            'link_by_email_enabled' => $this->config->boolean(SsoSettings::LINK_BY_EMAIL),
+            'auto_create_enabled' => $this->config->boolean(SsoSettings::AUTO_CREATE_BY_VERIFIED_EMAIL),
+        ]);
+
         $linked = $this->find($identity);
         if ($linked instanceof Identity) {
+            Log::debug('SSO identity matched an existing connection', [
+                'provider' => $identity->provider,
+            ]);
             $linked->fill([...$identity->details(), 'last_login_at' => now()])->save();
 
             return $linked->user;
         }
 
+        Log::debug('SSO identity has no existing connection', ['provider' => $identity->provider]);
+
         $user = $this->userByVerifiedEmail($identity);
         $created = false;
         if (! $user instanceof User) {
+            Log::debug('SSO email linking did not resolve an account; checking account creation', [
+                'provider' => $identity->provider,
+            ]);
             $user = $this->createByVerifiedEmail($identity);
             $created = $user instanceof User;
         }
 
-        if (! $user instanceof User || (! $created && Identity::query()->where('user_id', $user->id)->where('provider', $identity->provider)->exists())) {
+        if (! $user instanceof User) {
+            Log::warning('SSO identity rejected because no panel account was resolved', [
+                ...$this->identityContext($identity),
+                'link_by_email_enabled' => $this->config->boolean(SsoSettings::LINK_BY_EMAIL),
+                'auto_create_enabled' => $this->config->boolean(SsoSettings::AUTO_CREATE_BY_VERIFIED_EMAIL),
+            ]);
+            throw new SsoException(SsoException::UNLINKED);
+        }
+
+        if (! $created && Identity::query()->where('user_id', $user->id)->where('provider', $identity->provider)->exists()) {
+            Log::warning('SSO identity rejected because this panel account already has a connection for the provider', [
+                'provider' => $identity->provider,
+                'resolution' => 'verified_email_match',
+            ]);
             throw new SsoException(SsoException::UNLINKED);
         }
 
@@ -57,6 +85,12 @@ final class IdentityResolver
             'provider' => $identity->provider,
             'provider_user_id' => $identity->id,
             'last_login_at' => now(),
+        ]);
+
+        Log::info('SSO identity connected to a panel account', [
+            'provider' => $identity->provider,
+            'account_created' => $created,
+            'resolution' => $created ? 'new_account' : 'verified_email_match',
         ]);
 
         return $user;
@@ -70,14 +104,27 @@ final class IdentityResolver
     public function link(User $user, ExternalIdentity $identity): Identity
     {
         $owner = $this->find($identity);
+        Log::debug('SSO account connection requested', [
+            ...$this->identityContext($identity),
+            'external_identity_already_connected' => $owner instanceof Identity,
+            'connected_to_current_account' => $owner instanceof Identity && $owner->user_id === $user->id,
+        ]);
+
         if ($owner instanceof Identity && $owner->user_id !== $user->id) {
+            Log::warning('SSO account connection rejected because the external identity belongs to another panel account', [
+                'provider' => $identity->provider,
+            ]);
             throw new SsoException(SsoException::TAKEN);
         }
 
-        return Identity::query()->updateOrCreate(
+        $connection = Identity::query()->updateOrCreate(
             ['user_id' => $user->id, 'provider' => $identity->provider],
             [...$identity->details(), 'provider_user_id' => $identity->id],
         );
+
+        Log::info('SSO account connection saved', ['provider' => $identity->provider]);
+
+        return $connection;
     }
 
     /**
@@ -92,7 +139,6 @@ final class IdentityResolver
             ->first();
     }
 
-
     /**
      * Create a panel user only when the identity contains a verified, valid email
      * that is not already owned by an existing panel account.
@@ -103,11 +149,23 @@ final class IdentityResolver
     private function createByVerifiedEmail(ExternalIdentity $identity): ?User
     {
         $email = $identity->email;
-        if (! $this->config->boolean(SsoSettings::AUTO_CREATE_BY_VERIFIED_EMAIL)
-            || ! $identity->emailVerified
-            || $email === null
-            || filter_var($email, FILTER_VALIDATE_EMAIL) === false
-            || User::query()->where('email', $email)->exists()) {
+        $emailValid = $email !== null && filter_var($email, FILTER_VALIDATE_EMAIL) !== false;
+        $reason = match (true) {
+            ! $this->config->boolean(SsoSettings::AUTO_CREATE_BY_VERIFIED_EMAIL) => 'auto_create_disabled',
+            ! $identity->emailVerified => 'email_not_verified',
+            $email === null => 'email_missing',
+            ! $emailValid => 'email_invalid',
+            User::query()->where('email', $email)->exists() => 'email_already_in_use',
+            default => null,
+        };
+
+        if ($reason !== null) {
+            Log::debug('SSO automatic account creation skipped', [
+                ...$this->identityContext($identity),
+                'reason' => $reason,
+                'auto_create_enabled' => $this->config->boolean(SsoSettings::AUTO_CREATE_BY_VERIFIED_EMAIL),
+            ]);
+
             return null;
         }
 
@@ -147,6 +205,11 @@ final class IdentityResolver
 
         $user->forceFill($attributes)->save();
 
+        Log::info('SSO panel account created from a verified email', [
+            'provider' => $identity->provider,
+            'email_verified' => $identity->emailVerified,
+        ]);
+
         return $user;
     }
 
@@ -156,10 +219,47 @@ final class IdentityResolver
      */
     private function userByVerifiedEmail(ExternalIdentity $identity): ?User
     {
-        if (! $this->config->boolean(SsoSettings::LINK_BY_EMAIL) || ! $identity->emailVerified || $identity->email === null) {
+        $reason = match (true) {
+            ! $this->config->boolean(SsoSettings::LINK_BY_EMAIL) => 'link_by_email_disabled',
+            ! $identity->emailVerified => 'email_not_verified',
+            $identity->email === null => 'email_missing',
+            default => null,
+        };
+
+        if ($reason !== null) {
+            Log::debug('SSO verified-email account linking skipped', [
+                ...$this->identityContext($identity),
+                'reason' => $reason,
+                'link_by_email_enabled' => $this->config->boolean(SsoSettings::LINK_BY_EMAIL),
+            ]);
+
             return null;
         }
 
-        return User::query()->where('email', $identity->email)->first();
+        $user = User::query()->where('email', $identity->email)->first();
+        Log::debug('SSO verified-email account lookup completed', [
+            ...$this->identityContext($identity),
+            'panel_account_found' => $user instanceof User,
+        ]);
+
+        return $user;
+    }
+
+    /**
+     * Log identity properties useful for troubleshooting without writing personal
+     * values, OAuth credentials, access tokens, or provider subject IDs to logs.
+     *
+     * @param ExternalIdentity
+     * @return array<string, bool|string>
+     */
+    private function identityContext(ExternalIdentity $identity): array
+    {
+        return [
+            'provider' => $identity->provider,
+            'subject_present' => $identity->id !== '',
+            'email_present' => $identity->email !== null && $identity->email !== '',
+            'email_verified' => $identity->emailVerified,
+            'email_valid' => $identity->email !== null && filter_var($identity->email, FILTER_VALIDATE_EMAIL) !== false,
+        ];
     }
 }

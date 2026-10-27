@@ -22,6 +22,18 @@ Under **Admin > Extensions > Single Sign-On**, configure:
 
 Both settings are disabled by default. Auto-creation does not silently attach an external identity to an existing account; use the separate linking setting for that behavior.
 
+### Troubleshooting with debug logs
+
+The extension writes structured SSO diagnostics to the Laravel application log. Temporarily set `LOG_LEVEL=debug` in the panel `.env`, clear cached configuration, and retry the login/link flow:
+
+```sh
+cd /var/www/pterodactyl
+php artisan config:clear
+tail -f storage/logs/laravel.log
+```
+
+Look for entries beginning with `SSO` or `Custom OIDC`. Logs report flow stages, whether the UserInfo response contains `sub`, `email`, and a strictly boolean `email_verified: true`, which account-linking/creation setting is active, and why account creation or linking was skipped. OAuth codes, tokens, secrets, raw claims, email addresses, and external subject IDs are not written by these diagnostics. Set `LOG_LEVEL` back to the previous value after troubleshooting and clear the configuration cache again.
+
 ## Custom OpenID Connect provider
 
 The **Custom OIDC** settings tab supports one configurable self-hosted OIDC provider. Set its display name (for example, `Authentik`), client ID and secret, and choose one of these endpoint modes:

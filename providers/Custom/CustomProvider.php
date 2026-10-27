@@ -5,11 +5,14 @@ declare(strict_types=1);
 namespace Sso\Providers\Custom;
 
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Pterodactyl\Services\Extensions\ExtensionSettingDefinition;
 use Sso\Data\ExternalIdentity;
 use Sso\Exceptions\SsoException;
 use Sso\OAuth2Provider;
+use Throwable;
 
 /**
  * Generic OpenID Connect provider for self-hosted identity services.
@@ -180,10 +183,22 @@ final class CustomProvider extends OAuth2Provider
         $metadata = $this->discovery();
         $endpoint = $metadata[$metadataKey] ?? null;
         if (! is_string($endpoint)) {
+            Log::warning('Custom OIDC discovery metadata is missing a required endpoint', [
+                'provider' => $this->id(),
+                'endpoint' => $metadataKey,
+            ]);
             throw new SsoException(SsoException::PROVIDER);
         }
 
-        return $this->validatedUrl($endpoint);
+        try {
+            return $this->validatedUrl($endpoint);
+        } catch (SsoException $exception) {
+            Log::warning('Custom OIDC discovery endpoint is not a valid HTTP URL', [
+                'provider' => $this->id(),
+                'endpoint' => $metadataKey,
+            ]);
+            throw $exception;
+        }
     }
 
     /**
@@ -193,28 +208,84 @@ final class CustomProvider extends OAuth2Provider
      */
     private function discovery(): array
     {
-        $issuer = $this->validatedUrl($this->config->string($this->key('issuer_url')));
+        try {
+            $issuer = $this->validatedUrl($this->config->string($this->key('issuer_url')));
+        } catch (SsoException $exception) {
+            Log::warning('Custom OIDC issuer setting is not a valid HTTP URL', ['provider' => $this->id()]);
+            throw $exception;
+        }
+
         if (parse_url($issuer, PHP_URL_QUERY) !== null || parse_url($issuer, PHP_URL_FRAGMENT) !== null) {
+            Log::warning('Custom OIDC issuer URL must not contain a query or fragment', ['provider' => $this->id()]);
             throw new SsoException(SsoException::PROVIDER);
         }
 
         $cacheKey = 'sso.custom.oidc.'.hash('sha256', $issuer);
+        $cacheHit = Cache::has($cacheKey);
+        $issuerHost = parse_url($issuer, PHP_URL_HOST);
 
-        return Cache::remember($cacheKey, now()->addMinutes(15), function () use ($issuer): array {
+        Log::debug('Custom OIDC discovery lookup started', [
+            'provider' => $this->id(),
+            'issuer_host' => is_string($issuerHost) ? $issuerHost : null,
+            'cache_hit' => $cacheHit,
+        ]);
+
+        return Cache::remember($cacheKey, now()->addMinutes(15), function () use ($issuer, $issuerHost): array {
             $url = rtrim($issuer, '/').'/.well-known/openid-configuration';
-            $metadata = Http::acceptJson()->timeout(10)->get($url)->throw()->json();
-            if (! is_array($metadata)
-                || ! is_string($metadata['issuer'] ?? null)
-                || rtrim($metadata['issuer'], '/') !== rtrim($issuer, '/')
-                || ! is_string($metadata['authorization_endpoint'] ?? null)
-                || ! is_string($metadata['token_endpoint'] ?? null)
-                || ! is_string($metadata['userinfo_endpoint'] ?? null)) {
+
+            try {
+                $response = Http::acceptJson()->timeout(10)->get($url)->throw();
+            } catch (Throwable $throwable) {
+                Log::warning('Custom OIDC discovery request failed', [
+                    'provider' => $this->id(),
+                    'issuer_host' => is_string($issuerHost) ? $issuerHost : null,
+                    'exception_class' => $throwable::class,
+                    'http_status' => $throwable instanceof RequestException ? $throwable->response->status() : null,
+                ]);
+                throw $throwable;
+            }
+
+            $metadata = $response->json();
+            if (! is_array($metadata)) {
+                Log::warning('Custom OIDC discovery response was not a JSON object', [
+                    'provider' => $this->id(),
+                    'http_status' => $response->status(),
+                ]);
+                throw new SsoException(SsoException::PROVIDER);
+            }
+
+            $issuerMatches = is_string($metadata['issuer'] ?? null)
+                && rtrim($metadata['issuer'], '/') === rtrim($issuer, '/');
+            $hasAuthorizationEndpoint = is_string($metadata['authorization_endpoint'] ?? null);
+            $hasTokenEndpoint = is_string($metadata['token_endpoint'] ?? null);
+            $hasUserInfoEndpoint = is_string($metadata['userinfo_endpoint'] ?? null);
+
+            Log::debug('Custom OIDC discovery metadata received', [
+                'provider' => $this->id(),
+                'http_status' => $response->status(),
+                'issuer_matches_config' => $issuerMatches,
+                'authorization_endpoint_present' => $hasAuthorizationEndpoint,
+                'token_endpoint_present' => $hasTokenEndpoint,
+                'userinfo_endpoint_present' => $hasUserInfoEndpoint,
+            ]);
+
+            if (! $issuerMatches || ! $hasAuthorizationEndpoint || ! $hasTokenEndpoint || ! $hasUserInfoEndpoint) {
                 throw new SsoException(SsoException::PROVIDER);
             }
 
             foreach (['authorization_endpoint', 'token_endpoint', 'userinfo_endpoint'] as $key) {
-                $this->validatedUrl($metadata[$key]);
+                try {
+                    $this->validatedUrl($metadata[$key]);
+                } catch (SsoException $exception) {
+                    Log::warning('Custom OIDC discovery returned an invalid endpoint URL', [
+                        'provider' => $this->id(),
+                        'endpoint' => $key,
+                    ]);
+                    throw $exception;
+                }
             }
+
+            Log::debug('Custom OIDC discovery metadata validated', ['provider' => $this->id()]);
 
             return $metadata;
         });
